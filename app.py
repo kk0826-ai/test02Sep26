@@ -5,8 +5,8 @@ from datetime import datetime
 
 # Configuration
 JIRA_URL = "https://your-domain.atlassian.net"
-EMAIL = "your-email@domain.com"
-API_TOKEN = "your-atlassian-api-token"  # Generate at id.atlassian.net
+EMAIL = "kiran@miqdigital.com"
+API_TOKEN = "ATATT3xFfGF0jLXATf907B9oNBnVkK5HeqjgGfzEffWjSFv5isbfp-t0_InsSo9xSAR5bzYZWaSoewYJagfb_8_f0wl1cxYjWYfIgX5ab3fOD7d4NDMmdI4TXZ9bLwnFbKa9xKv7HVKJxNTDEEL9bBGxmYfcMl-tW4Hc-BC8YsupbH5pvnB7XsY=4B03FABA"  # Generate at id.atlassian.net
 
 auth = HTTPBasicAuth(EMAIL, API_TOKEN)
 headers = {"Accept": "application/json"}
