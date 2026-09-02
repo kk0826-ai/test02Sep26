@@ -1,50 +1,105 @@
+import streamlit as st
 import requests
 from requests.auth import HTTPBasicAuth
-from collections import Counter
-from datetime import datetime
+import pandas as pd
 
-# Configuration
-JIRA_URL = "https://your-domain.atlassian.net"
-EMAIL = "kiran@miqdigital.com"
-API_TOKEN = "ATATT3xFfGF0jLXATf907B9oNBnVkK5HeqjgGfzEffWjSFv5isbfp-t0_InsSo9xSAR5bzYZWaSoewYJagfb_8_f0wl1cxYjWYfIgX5ab3fOD7d4NDMmdI4TXZ9bLwnFbKa9xKv7HVKJxNTDEEL9bBGxmYfcMl-tW4Hc-BC8YsupbH5pvnB7XsY=4B03FABA"  # Generate at id.atlassian.net
+st.set_page_config(page_title="Jira Daily Tracker", page_icon="🎫", layout="wide")
+
+# Safe secret loading
+try:
+    JIRA_URL = st.secrets["JIRA_URL"].rstrip("/")
+    EMAIL = st.secrets["JIRA_EMAIL"]
+    API_TOKEN = st.secrets["JIRA_API_TOKEN"]
+except Exception:
+    st.error("⚠️ Credentials missing. Please configure `.streamlit/secrets.toml`.")
+    st.stop()
 
 auth = HTTPBasicAuth(EMAIL, API_TOKEN)
 headers = {"Accept": "application/json"}
 
-def get_jira_metrics():
-    # 1. Count tickets raised today
-    jql_today = "created >= startOfDay()"
-    res_today = requests.get(
+@st.cache_data(ttl=300)
+def fetch_jira_data():
+    # Query tickets raised today
+    created_res = requests.get(
         f"{JIRA_URL}/rest/api/3/search",
         headers=headers,
         auth=auth,
-        params={"jql": jql_today, "maxResults": 0}
+        params={"jql": "created >= startOfDay()", "maxResults": 100, "fields": "summary,assignee,created"},
+        timeout=10
     )
-    tickets_today = res_today.json().get("total", 0)
+    created_res.raise_for_status()
 
-    # 2. Count tickets worked on today grouped by person
-    jql_worked = "updated >= startOfDay()"
-    res_worked = requests.get(
+    # Query tickets updated/worked on today
+    updated_res = requests.get(
         f"{JIRA_URL}/rest/api/3/search",
         headers=headers,
         auth=auth,
-        params={"jql": jql_worked, "fields": "assignee", "maxResults": 100}
+        params={"jql": "updated >= startOfDay()", "maxResults": 100, "fields": "summary,assignee,status,updated"},
+        timeout=10
     )
-    
-    issues = res_worked.json().get("issues", [])
-    assignees = [
-        issue["fields"]["assignee"]["displayName"] 
-        if issue["fields"].get("assignee") else "Unassigned"
-        for issue in issues
-    ]
-    per_person = Counter(assignees)
+    updated_res.raise_for_status()
 
-    # Display Metrics
-    print(f"=== Jira Daily Summary ({datetime.now().strftime('%Y-%m-%d')}) ===")
-    print(f"Tickets Raised Today: {tickets_today}\n")
-    print("Tickets Worked On Per Person:")
-    for person, count in per_person.items():
-        print(f" • {person}: {count}")
+    return created_res.json().get("issues", []), updated_res.json().get("issues", [])
 
-if __name__ == "__main__":
-    get_jira_metrics()
+# UI Header
+st.title("🎫 Jira Daily Activity Dashboard")
+
+if st.button("🔄 Refresh Data"):
+    st.cache_data.clear()
+    st.rerun()
+
+try:
+    with st.spinner("Connecting to Jira API..."):
+        created_issues, updated_issues = fetch_jira_data()
+
+    # High-level Metrics
+    col1, col2 = st.columns(2)
+    col1.metric("Tickets Raised Today", len(created_issues))
+    col2.metric("Tickets Worked On Today", len(updated_issues))
+
+    st.divider()
+
+    # Assignee Breakdown Section
+    st.subheader("Tickets Worked On Per Person")
+    assignees = []
+    for issue in updated_issues:
+        assignee = issue["fields"].get("assignee")
+        name = assignee["displayName"] if assignee else "Unassigned"
+        assignees.append(name)
+
+    if assignees:
+        df_counts = pd.Series(assignees).value_counts().reset_index()
+        df_counts.columns = ["Team Member", "Tickets Worked"]
+
+        chart_col, table_col = st.columns([2, 1])
+        with chart_col:
+            st.bar_chart(df_counts.set_index("Team Member"))
+        with table_col:
+            st.dataframe(df_counts, use_container_width=True, hide_index=True)
+    else:
+        st.info("No tickets updated today yet.")
+
+    st.divider()
+
+    # Detailed Table of Today's Raised Tickets
+    st.subheader("Tickets Raised Today")
+    if created_issues:
+        raised_data = []
+        for issue in created_issues:
+            fields = issue["fields"]
+            assignee = fields.get("assignee")
+            raised_data.append({
+                "Key": issue["key"],
+                "Summary": fields.get("summary"),
+                "Assignee": assignee["displayName"] if assignee else "Unassigned"
+            })
+        st.dataframe(pd.DataFrame(raised_data), use_container_width=True, hide_index=True)
+    else:
+        st.info("No tickets created today yet.")
+
+except requests.exceptions.Timeout:
+    st.error("⏳ Connection timed out. Please check your Jira URL or corporate network/VPN access.")
+except requests.exceptions.HTTPError as err:
+    st.error(f"🔑 Jira API Error ({err.response.status_code}). Verify your email, API token, and permissions.")
+except Exception as e:
+    st.error(f"❌ An error occurred: {e}")
